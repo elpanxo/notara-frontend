@@ -1,38 +1,48 @@
-name: Deploy Data Layer
+name: CI/CD Frontend
 
 on:
   push:
-    branches:
-      - deploy
+    branches: [deploy]
 
 jobs:
-  deploy:
+  build-and-push:
     runs-on: ubuntu-latest
-
     steps:
-      - name: Checkout código
-        uses: actions/checkout@v4
-
-      - name: Configurar credenciales AWS
-        uses: aws-actions/configure-aws-credentials@v4
+      - uses: actions/checkout@v4
+      - uses: aws-actions/configure-aws-credentials@v4
         with:
           aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
           aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
           aws-session-token: ${{ secrets.AWS_SESSION_TOKEN }}
           aws-region: ${{ secrets.AWS_REGION }}
+      - uses: aws-actions/amazon-ecr-login@v2
 
-      - name: Deploy en EC2 usando SSM
+      - name: Build y Push frontend a ECR
+        run: |
+          IMAGE=${{ secrets.ECR_REGISTRY }}/notara-frontend:latest
+          docker build --build-arg NEXT_PUBLIC_API_URL=http://${{ secrets.FRONTEND_PUBLIC_IP }}:8080 -t $IMAGE ./frontend-pagina
+          docker push $IMAGE
+
+      - name: Build y Push BFF a ECR
+        run: |
+          docker build -t ${{ secrets.ECR_REGISTRY }}/notara-bff:latest ./bff
+          docker push ${{ secrets.ECR_REGISTRY }}/notara-bff:latest
+
+  deploy:
+    needs: build-and-push
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: aws-actions/configure-aws-credentials@v4
+        with: { ... }
+      - name: Deploy en EC2-Frontend via SSM
         run: |
           aws ssm send-command \
-            --instance-ids "${{ secrets.EC2_DATA_INSTANCE_ID }}" \
+            --instance-ids "${{ secrets.EC2_FRONTEND_INSTANCE_ID }}" \
             --document-name "AWS-RunShellScript" \
-            --comment "Deploy Docker Compose" \
-            --parameters commands='[
-              "cd /home/ec2-user",
-              "if [ ! -d repo ]; then git clone https://github.com/elpanxo/notara-frontend.git repo; else cd repo && git pull && cd ..; fi",
-              "cd repo",
-              "echo POSTGRES_PASSWORD=${{ secrets.POSTGRES_PASSWORD }} > .env",
-              "docker compose down",
-              "docker compose pull",
-              "docker compose up -d"
+            --parameters 'commands=[
+              "aws ecr get-login-password ... | docker login ...",
+              "cd /home/ec2-user && git clone ... repo || (cd repo && git pull)",
+              "echo BACKEND_EC2_IP=${{ secrets.BACKEND_EC2_PRIVATE_IP }} > .env",
+              "docker compose pull && docker compose up -d"
             ]'
