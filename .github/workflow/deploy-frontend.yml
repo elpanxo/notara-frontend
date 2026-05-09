@@ -1,75 +1,29 @@
-name: CI/CD Frontend
+name: Deploy
 
 on:
   push:
     branches:
-      - main
+    - deploy
 
 jobs:
-  build-and-push:
-    runs-on: ubuntu-latest
-
-    steps:
-      - name: Checkout código
-        uses: actions/checkout@v4
-
-      - name: Configurar credenciales AWS
-        uses: aws-actions/configure-aws-credentials@v4
-        with:
-          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
-          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
-          aws-session-token: ${{ secrets.AWS_SESSION_TOKEN }}
-          aws-region: ${{ secrets.AWS_REGION }}
-
-      - name: Login a ECR
-        uses: aws-actions/amazon-ecr-login@v2
-
-      - name: Build y Push Frontend a ECR
-        run: |
-          IMAGE=${{ secrets.ECR_REGISTRY }}/notara-frontend:latest
-
-          docker build \
-            --build-arg NEXT_PUBLIC_API_URL=http://${{ secrets.FRONTEND_PUBLIC_IP }}:8080 \
-            -t $IMAGE ./frontend-pagina
-
-          docker push $IMAGE
-
-      - name: Build y Push BFF a ECR
-        run: |
-          IMAGE=${{ secrets.ECR_REGISTRY }}/notara-bff:latest
-
-          docker build -t $IMAGE ./bff
-          docker push $IMAGE
-
   deploy:
-    needs: build-and-push
     runs-on: ubuntu-latest
 
     steps:
-      - name: Checkout código
-        uses: actions/checkout@v4
+      
+name: Checkout
+      uses: actions/checkout@v4
 
-      - name: Configurar credenciales AWS
-        uses: aws-actions/configure-aws-credentials@v4
-        with:
-          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
-          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
-          aws-session-token: ${{ secrets.AWS_SESSION_TOKEN }}
-          aws-region: ${{ secrets.AWS_REGION }}
-
-      - name: Deploy en EC2 vía SSM
-        run: |
-          aws ssm send-command \
-            --instance-ids "${{ secrets.EC2_FRONTEND_INSTANCE_ID }}" \
-            --document-name "AWS-RunShellScript" \
-            --comment "Deploy Notara" \
-            --parameters commands='[
-              "aws ecr get-login-password --region ${{ secrets.AWS_REGION }} | docker login --username AWS --password-stdin ${{ secrets.ECR_REGISTRY }}",
-              "cd /home/ec2-user || exit 1",
-              "if [ ! -d repo ]; then git clone https://github.com/elpanxo/notara-frontend.git repo; fi",
-              "cd repo && git pull",
-              "echo BACKEND_EC2_IP=${{ secrets.BACKEND_EC2_PRIVATE_IP }} > .env",
-              "docker compose pull",
-              "docker compose up -d"
-            ]'
-
+      
+name: Conectar por SSH y desplegar
+      uses: appleboy/ssh-action@v1.0.3
+      with:
+        host: ${{ secrets.FRONTEND_PUBLIC_IP }}
+        username: ec2-user
+        key: ${{ secrets.EC2_SSH_KEY }}
+        script: |
+          cd /home/ec2-user/repo || git clone https://github.com/elpanxo/notara-frontend.git repo
+          cd repo
+          git pull
+          docker compose down
+          docker compose up -d --build
