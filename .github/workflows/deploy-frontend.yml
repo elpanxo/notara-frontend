@@ -1,76 +1,58 @@
-name: CI/CD Frontend
-
+name: Deploy Notara Frontend
 on:
   push:
-    branches:
-      - main
+    branches: [main]
 
 jobs:
-  build-and-push:
-    runs-on: ubuntu-latest
-
+  build-and-deploy:
+    runs-on: self-hosted
     steps:
       - name: Checkout código
         uses: actions/checkout@v4
-
-      - name: Configurar credenciales AWS
-        uses: aws-actions/configure-aws-credentials@v4
-        with:
-          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
-          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
-          aws-session-token: ${{ secrets.AWS_SESSION_TOKEN }}
-          aws-region: ${{ secrets.AWS_REGION }}
 
       - name: Login a ECR
-        uses: aws-actions/amazon-ecr-login@v2
-
-      - name: Build y Push Frontend a ECR
         run: |
-          IMAGE=${{ secrets.ECR_REGISTRY }}/notara-frontend:latest
+          aws ecr get-login-password --region us-east-1 | \
+            docker login --username AWS --password-stdin \
+            495450559805.dkr.ecr.us-east-1.amazonaws.com
 
+      - name: Build y Push bff
+        run: |
+          docker build -t 495450559805.dkr.ecr.us-east-1.amazonaws.com/notara-bff:latest ./bff
+          docker push 495450559805.dkr.ecr.us-east-1.amazonaws.com/notara-bff:latest
+
+      - name: Build y Push frontend-pagina
+        run: |
           docker build \
             --build-arg NEXT_PUBLIC_API_URL=http://${{ secrets.FRONTEND_PUBLIC_IP }}:8080 \
-            -t $IMAGE ./frontend-pagina
+            -t 495450559805.dkr.ecr.us-east-1.amazonaws.com/notara-frontend:latest \
+            ./frontend-pagina
+          docker push 495450559805.dkr.ecr.us-east-1.amazonaws.com/notara-frontend:latest
 
-          docker push $IMAGE
-
-      - name: Build y Push BFF a ECR
-        run: |
-          IMAGE=${{ secrets.ECR_REGISTRY }}/notara-bff:latest
-
-          docker build -t $IMAGE ./bff
-          docker push $IMAGE
-
-  deploy:
-    needs: build-and-push
-    runs-on: ubuntu-latest
-
-    steps:
-      - name: Checkout código
-        uses: actions/checkout@v4
-
-      - name: Configurar credenciales AWS
-        uses: aws-actions/configure-aws-credentials@v4
-        with:
-          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
-          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
-          aws-session-token: ${{ secrets.AWS_SESSION_TOKEN }}
-          aws-region: ${{ secrets.AWS_REGION }}
-
-      - name: Deploy en EC2 vía SSM
+      - name: Deploy en EC2 Web via SSM
         run: |
           aws ssm send-command \
             --instance-ids "${{ secrets.EC2_FRONTEND_INSTANCE_ID }}" \
             --document-name "AWS-RunShellScript" \
-            --comment "Deploy Notara" \
+            --region us-east-1 \
             --parameters commands='[
-              "aws ecr get-login-password --region ${{ secrets.AWS_REGION }} | docker login --username AWS --password-stdin ${{ secrets.ECR_REGISTRY }}",
-              "cd /home/ec2-user || exit 1",
-              "if [ ! -d repo ]; then git clone https://github.com/elpanxo/notara-frontend.git repo; fi",
-              "cd repo && git pull",
-              "echo BACKEND_EC2_IP=${{ secrets.BACKEND_EC2_PRIVATE_IP }} > .env",
-              "docker compose pull",
-              "docker compose up -d"
+              "aws ecr get-login-password --region us-east-1 | docker login --username AWS --password-stdin 495450559805.dkr.ecr.us-east-1.amazonaws.com",
+              "if [ ! -d /home/ec2-user/notara-frontend ]; then git clone https://github.com/elpanxo/notara-frontend.git /home/ec2-user/notara-frontend; else cd /home/ec2-user/notara-frontend && git pull; fi",
+              "cd /home/ec2-user/notara-frontend",
+              "echo BACKEND_EC2_IP=${{ secrets.BACKEND_EC2_IP }} > .env",
+              "echo FRONTEND_PUBLIC_IP=${{ secrets.FRONTEND_PUBLIC_IP }} >> .env",
+              "docker compose down || true",
+              "docker compose up -d --pull always"
             ]'
+
+      - name: Verificar estado
+        run: |
+          sleep 20
+          aws ssm list-command-invocations \
+            --instance-id "${{ secrets.EC2_FRONTEND_INSTANCE_ID }}" \
+            --details \
+            --region us-east-1 \
+            --query "CommandInvocations[0].CommandPlugins[0].{Status:Status,Output:Output}" \
+            --output table
 
 
