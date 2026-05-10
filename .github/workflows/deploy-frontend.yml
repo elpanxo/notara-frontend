@@ -1,7 +1,7 @@
 name: Deploy Notara Frontend
 on:
   push:
-    branches: [main]
+    branches: [deploy]
 
 jobs:
   build-and-deploy:

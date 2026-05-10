@@ -11,6 +11,8 @@ services:
       - MS_NOTAS_METAS_URL=http://${BACKEND_EC2_IP}:8083
       - MS_USUARIOS_URL=http://${BACKEND_EC2_IP}:8081
       - EUREKA_URL=http://${BACKEND_EC2_IP}:8761/eureka
+    networks:
+      - notara-internal
     restart: unless-stopped
 
   frontend-pagina:
@@ -23,6 +25,12 @@ services:
     depends_on: [bff]
     environment:
       - NODE_ENV=production
+    networks:
+      - notara-internal
     restart: unless-stopped
 
 # Sin volumes aquí (solo front, no persiste datos)
+
+networks:
+  notara-internal:
+    driver: bridge

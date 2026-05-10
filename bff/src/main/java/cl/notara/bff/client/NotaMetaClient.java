@@ -11,7 +11,7 @@ import org.springframework.web.bind.annotation.RequestBody;
 import java.util.List;
 
 @FeignClient(name = "notas-metas",
-        url = "http://localhost:8086/api")
+        url = "${ms.notas.metas.url}/api")
 public interface NotaMetaClient {
 
     @PostMapping("/notas")
